@@ -18,6 +18,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -93,7 +94,9 @@ public class ExcelReportServiceTest {
         assertEquals("Total", totalRow.getCell(0).getStringCellValue());
         assertEquals(3, (int) totalRow.getCell(1).getNumericCellValue(), "Total breaks should equal 3");
         // Save the workbook to a file in the working directory.
-        String fileName = "ExcelReport.xlsx";
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd_HHmm");
+        String timestamp = sdf.format(new Date());
+        String fileName = "ExcelReport_" + timestamp + ".xlsx";
         File outputFile = new File(fileName);
         try (FileOutputStream fos = new FileOutputStream(outputFile)) {
             workbook.write(fos);
