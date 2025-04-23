@@ -75,7 +75,20 @@ public class Fingerprinter<T, ID> {
     public Map<GroupKey, GroupStats<ID>> getResults() {
         return Collections.unmodifiableMap(stats);
     }
-
+   /**
+    * Returns a list of summaries, each containing:
+    *  - the map of key-field→value,
+    *  - total count for that bucket,
+    *  - the collected sample IDs.
+    */
+   public List<GroupSummary<ID>> getGroupSummaries() {
+       return stats.entrySet().stream()
+               .map(e -> new GroupSummary<>(
+                       e.getKey().getFieldValues(),
+                       e.getValue().getCount(),
+                       e.getValue().getSampleIds()))
+               .collect(Collectors.toList());
+   }
     // ------------------------------------------------------------------------
     // Reflection helpers
     // ------------------------------------------------------------------------
@@ -161,6 +174,68 @@ public class Fingerprinter<T, ID> {
                 .sorted((e1,e2) -> Long.compare(e2.getValue().getCount(), e1.getValue().getCount()))
                 .limit(n)
                 .collect(Collectors.toList());
+    }
+    public List<ID> getDiverseSample(int totalSamples) {
+        // 1) sort groups by count ascending
+        List<Map.Entry<GroupKey, GroupStats<ID>>> entries = stats.entrySet()
+                .stream()
+                .sorted(Comparator.comparingLong(e -> e.getValue().getCount()))
+                .collect(Collectors.toList());
+
+        List<ID> result = new ArrayList<>(totalSamples);
+        int round = 0;
+        boolean added;
+        do {
+            added = false;
+            for (Map.Entry<GroupKey, GroupStats<ID>> entry : entries) {
+                List<ID> ids = entry.getValue().sampleIds;
+                if (ids.size() > round && result.size() < totalSamples) {
+                    result.add(ids.get(round));
+                    added = true;
+                }
+            }
+            round++;
+        } while (added && result.size() < totalSamples);
+
+        return result;
+    }
+    /**
+     * Flat DTO holding one group’s field-values, count, and sampled IDs.
+     */
+    public static class GroupSummary<ID> {
+        private final Map<String,Object> fields;
+        private final long count;
+        private final List<ID> sampleIds;
+
+        public GroupSummary(Map<String,Object> fields, long count, List<ID> sampleIds) {
+            this.fields    = new LinkedHashMap<>(fields);
+            this.count     = count;
+            this.sampleIds = new ArrayList<>(sampleIds);
+        }
+
+        /** The grouping fields and their values */
+        public Map<String,Object> getFields() {
+            return Collections.unmodifiableMap(fields);
+        }
+
+        /** Total number of items in this group */
+        public long getCount() {
+            return count;
+        }
+
+        /** Up to the configured sampleLimit IDs from this group */
+        public List<ID> getSampleIds() {
+            return Collections.unmodifiableList(sampleIds);
+        }
+
+        @Override
+        public String toString() {
+            return "GroupSummary{" +
+                    "fields=" + fields +
+                    ", count=" + count +
+                    ", sampleIds=" + sampleIds +
+                    '}';
+        }
     }
 
 }

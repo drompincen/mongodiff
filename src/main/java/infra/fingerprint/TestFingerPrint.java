@@ -43,11 +43,16 @@ public class TestFingerPrint {
         List<Map.Entry<Fingerprinter.GroupKey, Fingerprinter.GroupStats<String>>> top100 =
                 fp.topGroups(100);
         // print them
-        top100.forEach(e -> {
-            System.out.printf("%s → count=%d, sampleIds=%s%n",
-                    e.getKey(),
-                    e.getValue().getCount(),
-                    e.getValue().getSampleIds());
+//        top100.forEach(e -> {
+//            System.out.printf("%s → count=%d, sampleIds=%s%n",
+//                    e.getKey(),
+//                    e.getValue().getCount(),
+//                    e.getValue().getSampleIds());
+//        });
+        List<Fingerprinter.GroupSummary<String>> summaries = fp.getGroupSummaries();
+        summaries.forEach(s -> {
+            System.out.printf("Fields=%s | count=%d | sampleIds=%s%n",
+                    s.getFields(), s.getCount(), s.getSampleIds());
         });
 
     }
