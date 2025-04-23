@@ -1,0 +1,23 @@
+You are a Java code generator. Please produce three classes in the same package:
+
+1. A generic utility class `Fingerprinter<T, ID>` that:
+   - Takes in a bean class, a list of key‐field names, an ID‐field name, and a sample limit.
+   - Reflectively groups any collection of T by the combination of key‐field values.
+   - Tracks for each unique key‐tuple:
+     • Total count of items in that group.
+     • Up to sampleLimit ID values (not deduplicated).
+   - Exposes:
+     • A `process(Collection<T> items)` method to build the stats.
+     • A `Map<GroupKey, GroupStats<ID>> getResults()` to fetch raw counts+samples.
+     • A `List<Map.Entry<GroupKey,GroupStats<ID>>> topGroups(int n)` helper that returns the top n groups by count.
+   - Includes inner static classes `GroupKey` (holding an ordered map of field→value, with proper equals/hashCode) and `GroupStats<ID>` (long count + List<ID> sampleIds).
+
+2. A POJO `Account` with 12 typical fields (e.g. `accountId`, `firstName`, `lastName`, `email`, `balance`, `accountType`, `status`, `createdDate`, `state`, `city`, `zip`, `productType`) and standard JavaBean getters/setters.
+
+3. A test driver class `TestFingerprinter` with a `main` that:
+   - Generates 10_000 random `Account` instances (random UUID for accountId, random first/last names, emails, balances, enums for accountType/status/productType, random date within past 10 years, random US state/city/zip).
+   - Instantiates `Fingerprinter<Account,String>` grouping by `state,city,zip`, sampling up to 5 IDs.
+   - Calls `process(...)`.
+   - Retrieves the top 100 groups via `topGroups(100)` and prints each group’s key, count, and sample IDs in a readable format.
+
+Make sure all imports and package declarations are correct, and all code compiles under Java 11. Output only the Java source code for those three classes.```
