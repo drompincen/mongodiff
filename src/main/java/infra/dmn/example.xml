@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions
+        id="loanApproval"
+        name="Loan Approval"
+        namespace="http://example.com/dmn/loan"
+        xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/"
+        xmlns:dmndi="https://www.omg.org/spec/DMN/20191111/DMNDI/"
+        xmlns:di="http://www.omg.org/spec/DMN/20180521/DI/"
+        xmlns:dc="http://www.omg.org/spec/DMN/20180521/DC/"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        expressionLanguage="http://www.omg.org/spec/FEEL/20140401"
+        typeLanguage="http://www.omg.org/spec/DMN/20151101/dmn.xsd">
+
+    <!-- Input data: Applicant Age -->
+    <inputData id="ApplicantAgeID" name="Applicant Age">
+        <variable name="Applicant Age" typeRef="number"/>
+    </inputData>
+
+    <!-- Input data: Credit Score -->
+    <inputData id="CreditScoreID" name="Credit Score">
+        <variable name="Credit Score" typeRef="number"/>
+    </inputData>
+
+    <!-- Decision: Approve Loan? -->
+    <decision id="LoanDecisionID" name="Approve Loan?">
+        <variable name="Loan Decision" typeRef="string"/>
+        <decisionTable id="LoanDecisionTable" hitPolicy="FIRST">
+            <!-- Inputs -->
+            <input id="in1">
+                <label>Age</label>
+                <inputExpression id="inExpr1">
+                    <text>Applicant Age</text>
+                </inputExpression>
+            </input>
+            <input id="in2">
+                <label>Score</label>
+                <inputExpression id="inExpr2">
+                    <text>Credit Score</text>
+                </inputExpression>
+            </input>
+
+            <!-- Single output -->
+            <output id="out1" name="Decision" typeRef="string"/>
+
+            <!-- Rules -->
+            <rule id="rule1">
+                <inputEntry id="rule1_in1">
+                    <text>Applicant Age &gt;= 18</text>
+                </inputEntry>
+                <inputEntry id="rule1_in2">
+                    <text>Credit Score &gt;= 700</text>
+                </inputEntry>
+                <outputEntry id="rule1_out1">
+                    <text>"Approve"</text>
+                </outputEntry>
+            </rule>
+
+            <rule id="rule2">
+                <inputEntry id="rule2_in1">
+                    <text>true</text>  <!-- catch-all -->
+                </inputEntry>
+                <inputEntry id="rule2_in2">
+                    <text>true</text>  <!-- catch-all -->
+                </inputEntry>
+                <outputEntry id="rule2_out1">
+                    <text>"Reject"</text>
+                </outputEntry>
+            </rule>
+        </decisionTable>
+    </decision>
+
+</definitions>
