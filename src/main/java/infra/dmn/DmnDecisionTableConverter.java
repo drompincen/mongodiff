@@ -29,7 +29,7 @@ public class DmnDecisionTableConverter {
 
         // 1. Parse DMN XML
         DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-        dbf.setNamespaceAware(true);
+        dbf.setNamespaceAware(false);
         dbf.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
         DocumentBuilder db = dbf.newDocumentBuilder();
         Document doc = db.parse(dmnFile);
