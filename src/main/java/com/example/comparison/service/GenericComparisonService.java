@@ -10,7 +10,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.util.CloseableIterator;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -18,6 +17,7 @@ import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
+import java.util.stream.Stream;
 
 @Service
 public class GenericComparisonService {
@@ -102,11 +102,11 @@ public class GenericComparisonService {
         Query query = new Query().with(Sort.by(Sort.Direction.ASC, keyAttribute));
         List<ComparisonBreak> allBreaksAndMatches = new ArrayList<>();
 
-        try (CloseableIterator<T> streamA = mongoTemplate.stream(query, clazz, collectionA);
-             CloseableIterator<T> streamB = mongoTemplate.stream(query, clazz, collectionB)) {
+        try (Stream<T> streamA = mongoTemplate.stream(query, clazz, collectionA);
+             Stream<T> streamB = mongoTemplate.stream(query, clazz, collectionB)) {
 
-            Iterator<T> iteratorA = streamA;
-            Iterator<T> iteratorB = streamB;
+            Iterator<T> iteratorA = streamA.iterator();
+            Iterator<T> iteratorB = streamB.iterator();
 
             T currentA = null;
             if (iteratorA.hasNext()) {

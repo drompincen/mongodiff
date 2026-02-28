@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>MongoDiff - Comparison Testing Tool</title>
+    <style>
+        :root {
+            --bg:           #2b2b2b;
+            --bg-raised:    #3c3f41;
+            --bg-input:     #45494a;
+            --bg-hover:     #4e5254;
+            --bg-selected:  #214283;
+            --border:       #555555;
+            --border-focus: #4a88c7;
+            --text:         #bababa;
+            --text-bright:  #d4d4d4;
+            --text-dim:     #808080;
+            --accent:       #4a88c7;
+            --green:        #6a8759;
+            --green-bg:     #2e4432;
+            --red:          #cc7832;
+            --red-bg:       #4b3324;
+            --yellow:       #bbb529;
+            --yellow-bg:    #3b3a22;
+            --error:        #bc3f3c;
+            --match-bar:    #6a8759;
+            --break-bar:    #cc7832;
+            --scrollbar:    #555;
+            --scrollbar-bg: #2b2b2b;
+            --font:         'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body, #root {
+            height: 100%;
+            font-family: var(--font);
+            font-size: 13px;
+            background: var(--bg);
+            color: var(--text);
+        }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: var(--scrollbar-bg); }
+        ::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 4px; }
+    </style>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-type="module">
+const { useState, useEffect, useRef, useMemo } = React;
+
+/* If served from a different port, API calls go to Spring Boot on 8080 */
+const API_BASE = "";
+
+/* ────────────────────── mock data ────────────────────── */
+
+const MOCK_SESSIONS = [
+    { id: "s1", name: "Q1 Regression", user: "alice",   startedAt: "2026-02-28T09:12:00Z", status: "comparing",  scopeCount: 120 },
+    { id: "s2", name: "Hotfix-442 Verify", user: "bob", startedAt: "2026-02-28T10:30:00Z", status: "loading_rc", scopeCount: 45  },
+    { id: "s3", name: "Nightly Smoke", user: "carol",   startedAt: "2026-02-28T08:00:00Z", status: "completed",  scopeCount: 2500 },
+];
+
+const COLLECTION_NAMES = ["accountCollection","carCollection","policyCollection","tradeCollection","loanCollection"];
+
+function pickCollection() { return COLLECTION_NAMES[Math.floor(Math.random() * COLLECTION_NAMES.length)]; }
+
+function generateMockScope(ids, sessionName, category) {
+    const phases = ["pending","baseline_loading","baseline_done","rc_loading","rc_done","comparing","completed"];
+    return ids.map(id => {
+        const phase = phases[Math.floor(Math.random() * phases.length)];
+        const matchPct = phase === "completed" ? Math.floor(Math.random() * 40 + 60) : null;
+        const breakPct = matchPct != null ? 100 - matchPct : null;
+        const totalFields = phase === "completed" ? Math.floor(Math.random() * 60 + 20) : null;
+        const matchedFields = totalFields != null ? Math.round(totalFields * matchPct / 100) : null;
+        const breakFields = totalFields != null ? totalFields - matchedFields : null;
+        const duration = phase === "completed" ? (Math.random() * 12 + 0.5).toFixed(1) + "s" : null;
+        return { id, name: pickCollection(), category: category || sessionName, phase, matchPct, breakPct, totalFields, matchedFields, breakFields, duration };
+    });
+}
+
+function generateMockBreaks(recordId) {
+    const fields = ["accountName","accountType","broker","balance","currency","riskLevel","email","phoneNumber","address","country","state","city","zipCode","investmentStyle","accountStatus"];
+    const breaks = [];
+    const count = Math.floor(Math.random() * 6) + 1;
+    const picked = new Set();
+    while (picked.size < count && picked.size < fields.length) picked.add(fields[Math.floor(Math.random() * fields.length)]);
+    picked.forEach(field => {
+        breaks.push({
+            comparisonKey: recordId, differenceField: field,
+            valueInCollectionA: "baseline_" + field + "_val",
+            valueInCollectionB: "rc_" + field + "_val",
+            breakType: "difference",
+        });
+    });
+    return breaks;
+}
+
+/* ────────────────────── icons ────────────────────── */
+
+const Icon = ({ name, size = 16, color = "currentColor", ...rest }) => {
+    const icons = {
+        check:    <path d="M5 12l5 5L20 7" stroke={color} strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>,
+        x:        <><line x1="6" y1="6" x2="18" y2="18" stroke={color} strokeWidth="2" strokeLinecap="round"/><line x1="18" y1="6" x2="6" y2="18" stroke={color} strokeWidth="2" strokeLinecap="round"/></>,
+        download: <><path d="M12 4v12M12 16l-4-4M12 16l4-4" stroke={color} strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/><path d="M4 20h16" stroke={color} strokeWidth="2" strokeLinecap="round"/></>,
+        play:     <polygon points="6,4 20,12 6,20" fill={color}/>,
+        users:    <><circle cx="9" cy="7" r="3" stroke={color} strokeWidth="1.5" fill="none"/><path d="M2 21v-2a4 4 0 014-4h6a4 4 0 014 4v2" stroke={color} strokeWidth="1.5" fill="none"/><circle cx="17" cy="8" r="2.5" stroke={color} strokeWidth="1.5" fill="none"/><path d="M19 21v-1.5a3 3 0 00-2-2.8" stroke={color} strokeWidth="1.5" fill="none"/></>,
+        refresh:  <><path d="M1 4v6h6" stroke={color} strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/><path d="M3.51 15a9 9 0 105.64-11.36L1 10" stroke={color} strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></>,
+        spinner:  <circle cx="12" cy="12" r="10" stroke={color} strokeWidth="2.5" fill="none" strokeDasharray="31.42 31.42" strokeLinecap="round"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/></circle>,
+        back:     <><path d="M19 12H5M5 12l6-6M5 12l6 6" stroke={color} strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></>,
+        plus:     <><line x1="12" y1="5" x2="12" y2="19" stroke={color} strokeWidth="2" strokeLinecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke={color} strokeWidth="2" strokeLinecap="round"/></>,
+        search:   <><circle cx="10" cy="10" r="6" stroke={color} strokeWidth="2" fill="none"/><line x1="15" y1="15" x2="20" y2="20" stroke={color} strokeWidth="2" strokeLinecap="round"/></>,
+        eye:      <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" stroke={color} strokeWidth="1.5" fill="none"/><circle cx="12" cy="12" r="3" stroke={color} strokeWidth="1.5" fill="none"/></>,
+    };
+    return <svg width={size} height={size} viewBox="0 0 24 24" {...rest}>{icons[name]}</svg>;
+};
+
+/* ────────────────────── shared styles ────────────────────── */
+
+const S = {
+    btn:        { display:"inline-flex", alignItems:"center", gap:6, padding:"6px 14px", border:"1px solid var(--border)", borderRadius:4, background:"var(--bg-raised)", color:"var(--text-bright)", cursor:"pointer", fontSize:13, fontFamily:"var(--font)", transition:"background .15s" },
+    btnPrimary: { background:"var(--accent)", borderColor:"var(--accent)", color:"#fff" },
+    btnSmall:   { padding:"4px 10px", fontSize:12 },
+    input:      { padding:"6px 10px", border:"1px solid var(--border)", borderRadius:4, background:"var(--bg-input)", color:"var(--text-bright)", fontSize:13, fontFamily:"var(--font)", outline:"none", transition:"border-color .15s" },
+    card:       { background:"var(--bg-raised)", border:"1px solid var(--border)", borderRadius:6, padding:16, marginBottom:12 },
+    label:      { display:"block", marginBottom:6, color:"var(--text-dim)", fontSize:11, textTransform:"uppercase", letterSpacing:1 },
+    h2:         { fontSize:16, color:"var(--text-bright)", marginBottom:12 },
+};
+const thStyle = { textAlign:"left", padding:"8px 12px", fontSize:11, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:1, fontWeight:600, borderBottom:"2px solid var(--border)", position:"sticky", top:0, background:"var(--bg-raised)", zIndex:1 };
+const tdStyle = { padding:"8px 12px", fontSize:13, color:"var(--text-bright)", borderBottom:"1px solid var(--border)" };
+
+/* ────────────────────── small components ────────────────────── */
+
+function ProgressBar({ value, max, label, color = "var(--accent)" }) {
+    const pct = max > 0 ? Math.round(value / max * 100) : 0;
+    return (
+        <div style={{ marginBottom: 8 }}>
+            {label && <div style={{ fontSize:11, color:"var(--text-dim)", marginBottom:3 }}>{label}</div>}
+            <div style={{ height:6, background:"var(--bg-input)", borderRadius:3, overflow:"hidden" }}>
+                <div style={{ width:pct+"%", height:"100%", background:color, borderRadius:3, transition:"width .4s ease" }}/>
+            </div>
+            <div style={{ fontSize:11, color:"var(--text-dim)", marginTop:2, textAlign:"right" }}>{pct}%</div>
+        </div>
+    );
+}
+
+function PhaseBadge({ phase }) {
+    const map = {
+        pending:          { bg:"var(--bg-input)",  color:"var(--text-dim)", label:"Pending" },
+        baseline_loading: { bg:"var(--yellow-bg)", color:"var(--yellow)",   label:"Baseline..." },
+        baseline_done:    { bg:"var(--green-bg)",  color:"var(--green)",    label:"Baseline OK" },
+        rc_loading:       { bg:"var(--yellow-bg)", color:"var(--yellow)",   label:"RC..." },
+        rc_done:          { bg:"var(--green-bg)",  color:"var(--green)",    label:"RC OK" },
+        comparing:        { bg:"#2d3a50",          color:"var(--accent)",   label:"Comparing..." },
+        completed:        { bg:"var(--green-bg)",  color:"var(--green)",    label:"Done" },
+    };
+    const s = map[phase] || map.pending;
+    return (
+        <span style={{ display:"inline-block", padding:"2px 8px", borderRadius:3, fontSize:11, background:s.bg, color:s.color, whiteSpace:"nowrap" }}>
+            {(phase==="baseline_loading"||phase==="rc_loading"||phase==="comparing") && <Icon name="spinner" size={10} color={s.color} style={{marginRight:4,verticalAlign:"middle"}}/>}
+            {s.label}
+        </span>
+    );
+}
+
+function MatchBreakBar({ matchPct, breakPct, width = 120 }) {
+    if (matchPct == null) return <span style={{color:"var(--text-dim)"}}>—</span>;
+    return (
+        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+            <div style={{ width, height:10, display:"flex", borderRadius:3, overflow:"hidden", border:"1px solid var(--border)" }}>
+                <div style={{ width:matchPct+"%", background:"var(--match-bar)", transition:"width .3s" }}/>
+                <div style={{ width:breakPct+"%", background:"var(--break-bar)", transition:"width .3s" }}/>
+            </div>
+            <span style={{ fontSize:11, color:"var(--green)", minWidth:32 }}>{matchPct}%</span>
+            <span style={{ fontSize:11, color:"var(--red)", minWidth:32 }}>{breakPct}%</span>
+        </div>
+    );
+}
+
+function StatCard({ label, value, sub, valueColor }) {
+    return (
+        <div style={{...S.card, padding:"10px 16px", minWidth:130, flex:1, marginBottom:0 }}>
+            <div style={{ fontSize:11, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:1 }}>{label}</div>
+            <div style={{ fontSize:22, fontWeight:700, color:valueColor||"var(--text-bright)", marginTop:2 }}>{value}</div>
+            {sub && <div style={{ fontSize:11, color:"var(--yellow)", marginTop:2 }}><Icon name="spinner" size={10} color="var(--yellow)" style={{marginRight:3,verticalAlign:"middle"}}/>{sub}</div>}
+        </div>
+    );
+}
+
+/* ────────────────────── Active Sessions sidebar ────────────────────── */
+
+function ActiveSessionsPanel({ sessions, currentSessionId, onClose }) {
+    return (
+        <div style={{ position:"fixed", top:0, right:0, bottom:0, width:360, background:"var(--bg-raised)", borderLeft:"1px solid var(--border)", zIndex:100, display:"flex", flexDirection:"column", boxShadow:"-4px 0 20px rgba(0,0,0,.5)" }}>
+            <div style={{ padding:"12px 16px", borderBottom:"1px solid var(--border)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <span style={{ fontSize:14, color:"var(--text-bright)" }}>Active Sessions</span>
+                <button onClick={onClose} style={{...S.btn, padding:"4px 8px"}}><Icon name="x" size={14}/></button>
+            </div>
+            <div style={{ flex:1, overflowY:"auto", padding:16 }}>
+                {sessions.map(s => (
+                    <div key={s.id} style={{...S.card, border: s.id===currentSessionId ? "1px solid var(--accent)" : "1px solid var(--border)"}}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+                            <span style={{ color:"var(--text-bright)", fontWeight:600 }}>{s.name}</span>
+                            <PhaseBadge phase={s.status}/>
+                        </div>
+                        <div style={{ fontSize:11, color:"var(--text-dim)" }}>
+                            <span style={{ color:"var(--accent)" }}>{s.user}</span>{" "}&middot; {s.scopeCount} IDs &middot; {new Date(s.startedAt).toLocaleTimeString()}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+/* ────────────────────── Add IDs to Session panel ────────────────────── */
+
+function AddIdsPanel({ sessionName, onAdd, onClose }) {
+    const [ids, setIds] = useState("");
+    const [category, setCategory] = useState("");
+    const placeholder = sessionName || "session name";
+    return (
+        <div style={{...S.card, border:"1px solid var(--accent)", marginBottom:16 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                <h2 style={{...S.h2, marginBottom:0 }}><Icon name="plus" size={14} style={{marginRight:6,verticalAlign:"middle"}}/> Add IDs to Session</h2>
+                <button onClick={onClose} style={{...S.btn, ...S.btnSmall}}><Icon name="x" size={12}/></button>
+            </div>
+            <div style={{ display:"flex", gap:12, alignItems:"flex-end", flexWrap:"wrap" }}>
+                <div style={{ flex:2, minWidth:200 }}>
+                    <label style={S.label}>IDs (comma-separated)</label>
+                    <input value={ids} onChange={e=>setIds(e.target.value)} placeholder="qqqq1, ee3, rr4" style={{...S.input, width:"100%"}} />
+                </div>
+                <div style={{ flex:1, minWidth:150 }}>
+                    <label style={S.label}>Category</label>
+                    <input value={category} onChange={e=>setCategory(e.target.value)} placeholder={placeholder} style={{...S.input, width:"100%"}} />
+                </div>
+                <button
+                    style={{...S.btn, ...S.btnPrimary, opacity:(!ids.trim())?0.5:1 }}
+                    disabled={!ids.trim()}
+                    onClick={() => { onAdd(ids.split(/[,\n\r]+/).map(s=>s.trim()).filter(Boolean), category.trim() || sessionName); setIds(""); setCategory(""); }}
+                >
+                    <Icon name="plus" size={12} color="#fff"/> Add
+                </button>
+            </div>
+        </div>
+    );
+}
+
+/* ────────────────────── Break detail view ────────────────────── */
+
+function BreakDetailView({ record, onBack, breaks: propBreaks }) {
+    const [fetchedBreaks, setFetchedBreaks] = useState(null);
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        if (propBreaks) { setFetchedBreaks(propBreaks); return; }
+        // Fallback to mock for demo mode
+        setFetchedBreaks(generateMockBreaks(record.id));
+    }, [record.id, propBreaks]);
+
+    const breaks = fetchedBreaks || [];
+    const breakTypeStyle = {
+        difference: { background:"var(--red-bg)", color:"var(--red)" },
+        onlyOnA:    { background:"var(--yellow-bg)", color:"var(--yellow)" },
+        onlyOnB:    { background:"var(--yellow-bg)", color:"var(--yellow)" },
+        match:      { background:"var(--green-bg)", color:"var(--green)" },
+    };
+
+    return (
+        <div>
+            <button onClick={onBack} style={{...S.btn, marginBottom:16}}><Icon name="back" size={14}/> Back to grid</button>
+            <h2 style={S.h2}>Breaks for {record.id} <span style={{fontSize:12,color:"var(--text-dim)",fontWeight:400}}>({record.name})</span></h2>
+            <div style={{ display:"flex", gap:16, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
+                <MatchBreakBar matchPct={record.matchPct} breakPct={record.breakPct} width={200}/>
+                <span style={{ fontSize:12, color:"var(--text-dim)" }}>{record.matchedFields} matches / {record.breakFields} breaks of {record.totalFields} fields</span>
+                <span style={{ fontSize:12, color:"var(--text-dim)" }}>Category: <span style={{color:"var(--accent)"}}>{record.category}</span></span>
+                <span style={{ fontSize:12, color:"var(--text-dim)" }}>Duration: {record.duration}</span>
+            </div>
+            <div style={{ overflowX:"auto" }}>
+                <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                    <thead>
+                        <tr><th style={thStyle}>Field</th><th style={thStyle}>Baseline (A)</th><th style={thStyle}>RC (B)</th><th style={thStyle}>Type</th></tr>
+                    </thead>
+                    <tbody>
+                        {breaks.map((b,i) => {
+                            const bts = breakTypeStyle[b.breakType] || breakTypeStyle.difference;
+                            return (
+                                <tr key={i}>
+                                    <td style={tdStyle}>{b.differenceField || "Record"}</td>
+                                    <td style={{...tdStyle, background:"rgba(187,181,41,.08)"}}>{b.valueInCollectionA}</td>
+                                    <td style={{...tdStyle, background:"rgba(106,135,89,.08)"}}>{b.valueInCollectionB}</td>
+                                    <td style={tdStyle}><span style={{padding:"2px 8px",borderRadius:3,fontSize:11,...bts}}>{b.breakType}</span></td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
+
+/* ────────────────────── Main results grid ────────────────────── */
+
+function ResultsGrid({ scope, sessionName, onSelectRecord, onDownload, onAddIds }) {
+    const [filter, setFilter] = useState("");
+    const [catFilter, setCatFilter] = useState("__all__");
+    const [showAddPanel, setShowAddPanel] = useState(false);
+    const [sortCol, setSortCol] = useState(null);
+    const [sortDir, setSortDir] = useState("asc");
+
+    const categories = useMemo(() => [...new Set(scope.map(r => r.category))], [scope]);
+
+    const filtered = useMemo(() => {
+        let list = scope;
+        if (catFilter !== "__all__") list = list.filter(r => r.category === catFilter);
+        if (filter) { const q = filter.toLowerCase(); list = list.filter(r => r.id.toLowerCase().includes(q) || r.name.toLowerCase().includes(q) || r.category.toLowerCase().includes(q)); }
+        if (sortCol) {
+            list = [...list].sort((a, b) => {
+                let va = a[sortCol], vb = b[sortCol];
+                if (va == null && vb == null) return 0;
+                if (va == null) return 1;
+                if (vb == null) return -1;
+                if (typeof va === "string") { va = va.toLowerCase(); vb = (vb||"").toLowerCase(); }
+                if (va < vb) return sortDir === "asc" ? -1 : 1;
+                if (va > vb) return sortDir === "asc" ? 1 : -1;
+                return 0;
+            });
+        }
+        return list;
+    }, [scope, filter, catFilter, sortCol, sortDir]);
+
+    function toggleSort(col) {
+        if (sortCol === col) { setSortDir(d => d === "asc" ? "desc" : "asc"); }
+        else { setSortCol(col); setSortDir("asc"); }
+    }
+    function sortArrow(col) {
+        if (sortCol !== col) return " ";
+        return sortDir === "asc" ? " \u25B2" : " \u25BC";
+    }
+
+    const completed = scope.filter(r => r.phase === "completed");
+    const avgMatch = completed.length > 0 ? Math.round(completed.reduce((s,r) => s + r.matchPct, 0) / completed.length) : 0;
+    const baselineLoading = scope.filter(r => r.phase === "baseline_loading").length;
+    const baselineDone    = scope.filter(r => ["baseline_done","rc_loading","rc_done","comparing","completed"].includes(r.phase)).length;
+    const rcLoading       = scope.filter(r => r.phase === "rc_loading").length;
+    const rcDone          = scope.filter(r => ["rc_done","comparing","completed"].includes(r.phase)).length;
+    const comparing       = scope.filter(r => r.phase === "comparing").length;
+    const compDone        = completed.length;
+
+    return (
+        <div>
+            {/* Stats */}
+            <div style={{ display:"flex", gap:16, flexWrap:"wrap", marginBottom:16 }}>
+                <StatCard label="Total IDs" value={scope.length}/>
+                <StatCard label="Baseline" value={`${baselineDone}/${scope.length}`} sub={baselineLoading>0 ? `${baselineLoading} loading` : null}/>
+                <StatCard label="RC" value={`${rcDone}/${scope.length}`} sub={rcLoading>0 ? `${rcLoading} loading` : null}/>
+                <StatCard label="Compared" value={`${compDone}/${scope.length}`} sub={comparing>0 ? `${comparing} comparing` : null}/>
+                <StatCard label="Avg Match" value={`${avgMatch}%`} valueColor={avgMatch>=80?"var(--green)":avgMatch>=50?"var(--yellow)":"var(--red)"}/>
+                <StatCard label="Categories" value={categories.length}/>
+            </div>
+
+            {/* Progress */}
+            <div style={S.card}>
+                <ProgressBar value={baselineDone} max={scope.length} label={`Baseline loading \u2014 ${baselineDone} of ${scope.length}`} color="var(--yellow)"/>
+                <ProgressBar value={rcDone}       max={scope.length} label={`RC loading \u2014 ${rcDone} of ${scope.length}`}             color="var(--accent)"/>
+                <ProgressBar value={compDone}      max={scope.length} label={`Comparison \u2014 ${compDone} of ${scope.length}`}          color="var(--green)"/>
+            </div>
+
+            {/* Add IDs panel */}
+            {showAddPanel && <AddIdsPanel sessionName={sessionName} onAdd={onAddIds} onClose={() => setShowAddPanel(false)}/>}
+
+            {/* Toolbar */}
+            <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:12, flexWrap:"wrap" }}>
+                <div style={{ position:"relative", flex:1, minWidth:200, maxWidth:300 }}>
+                    <Icon name="search" size={14} color="var(--text-dim)" style={{ position:"absolute", left:8, top:8 }}/>
+                    <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter IDs, name, category..." style={{...S.input, width:"100%", paddingLeft:28 }}/>
+                </div>
+                <select value={catFilter} onChange={e=>setCatFilter(e.target.value)} style={{...S.input, minWidth:140, cursor:"pointer"}}>
+                    <option value="__all__">All categories</option>
+                    {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <button style={{...S.btn, ...S.btnPrimary}} onClick={() => setShowAddPanel(!showAddPanel)}><Icon name="plus" size={12} color="#fff"/> Add IDs</button>
+                <div style={{ flex:1 }}/>
+                <span style={{ fontSize:12, color:"var(--text-dim)" }}>{filtered.length} of {scope.length} shown</span>
+                <button style={{...S.btn, ...S.btnPrimary}} onClick={onDownload}><Icon name="download" size={14} color="#fff"/> Excel</button>
+            </div>
+
+            {/* Data Grid */}
+            <div style={{ overflowX:"auto", maxHeight:"calc(100vh - 420px)", overflowY:"auto", border:"1px solid var(--border)", borderRadius:6, background:"var(--bg-raised)" }}>
+                <table style={{ width:"100%", borderCollapse:"collapse", minWidth:900 }}>
+                    <thead>
+                        <tr>
+                            <th style={{...thStyle, cursor:"pointer", width:180}} onClick={()=>toggleSort("id")}>ID{sortArrow("id")}</th>
+                            <th style={{...thStyle, cursor:"pointer", width:180}} onClick={()=>toggleSort("name")}>Name{sortArrow("name")}</th>
+                            <th style={{...thStyle, cursor:"pointer", width:150}} onClick={()=>toggleSort("category")}>Category{sortArrow("category")}</th>
+                            <th style={{...thStyle, cursor:"pointer", width:260}} onClick={()=>toggleSort("matchPct")}>Results{sortArrow("matchPct")}</th>
+                            <th style={{...thStyle, cursor:"pointer", width:90}}  onClick={()=>toggleSort("phase")}>Status{sortArrow("phase")}</th>
+                            <th style={{...thStyle, cursor:"pointer", width:80}}  onClick={()=>toggleSort("duration")}>Duration{sortArrow("duration")}</th>
+                            <th style={{...thStyle, width:80, textAlign:"center"}}>Details</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {filtered.map(r => (
+                            <tr
+                                key={r.id}
+                                style={{ cursor: r.phase==="completed" ? "pointer" : "default" }}
+                                onMouseEnter={e => e.currentTarget.style.background="var(--bg-hover)"}
+                                onMouseLeave={e => e.currentTarget.style.background="transparent"}
+                                onClick={() => r.phase==="completed" && onSelectRecord(r)}
+                            >
+                                <td style={{...tdStyle, fontWeight:600 }}>{r.id}</td>
+                                <td style={tdStyle}>{r.name}</td>
+                                <td style={tdStyle}><span style={{ padding:"2px 8px", borderRadius:3, fontSize:11, background:"var(--bg-selected)", color:"var(--accent)" }}>{r.category}</span></td>
+                                <td style={tdStyle}><MatchBreakBar matchPct={r.matchPct} breakPct={r.breakPct} width={100}/></td>
+                                <td style={tdStyle}><PhaseBadge phase={r.phase}/></td>
+                                <td style={{...tdStyle, color: r.duration ? "var(--text-bright)" : "var(--text-dim)" }}>{r.duration || "\u2014"}</td>
+                                <td style={{...tdStyle, textAlign:"center"}}>
+                                    {r.phase==="completed" ? (
+                                        <button style={{...S.btn, ...S.btnSmall, padding:"3px 8px"}} onClick={e=>{e.stopPropagation();onSelectRecord(r);}}>
+                                            <Icon name="eye" size={12}/> View
+                                        </button>
+                                    ) : (
+                                        <span style={{color:"var(--text-dim)"}}>—</span>
+                                    )}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
+
+/* ────────────────────── App ────────────────────── */
+
+function App() {
+    const [sessions] = useState(MOCK_SESSIONS);
+    const [currentSession, setCurrentSession] = useState(null);
+    const [showSessions, setShowSessions] = useState(false);
+    const [sessionName, setSessionName] = useState("");
+    const [csvText, setCsvText] = useState("");
+    const [scope, setScope] = useState(null);
+    const [phase, setPhase] = useState("idle");
+    const [selectedRecord, setSelectedRecord] = useState(null);
+    const [isSampleMode, setIsSampleMode] = useState(false);
+    const [sampleBreaks, setSampleBreaks] = useState(null);
+    const [sampleLoading, setSampleLoading] = useState(false);
+    const tickRef = useRef(null);
+
+    function startSession() {
+        if (!sessionName.trim() || !csvText.trim()) return;
+        const ids = csvText.split(/[,\n\r]+/).map(s=>s.trim()).filter(Boolean);
+        if (!ids.length) return;
+        const scopeData = ids.map(id => ({ id, name: pickCollection(), category: sessionName, phase:"pending", matchPct:null, breakPct:null, totalFields:null, matchedFields:null, breakFields:null, duration:null }));
+        setScope(scopeData);
+        setPhase("loading");
+        setCurrentSession({ id:"s-new", name:sessionName, user:"you", startedAt:new Date().toISOString(), status:"loading_baseline", scopeCount:ids.length });
+        simulateProgress(scopeData);
+    }
+
+    function loadDemoSession() {
+        const ids1 = []; for (let i=1;i<=50;i++) ids1.push("ACC-"+String(i).padStart(5,"0"));
+        const ids2 = []; for (let i=51;i<=80;i++) ids2.push("ACC-"+String(i).padStart(5,"0"));
+        const scope1 = generateMockScope(ids1, "Demo Session", "initial-batch");
+        const scope2 = generateMockScope(ids2, "Demo Session", "batch-2");
+        const all = [...scope1, ...scope2];
+        setSessionName("Demo Session");
+        setScope(all);
+        setPhase("running");
+        setCurrentSession({ id:"s-demo", name:"Demo Session", user:"you", startedAt:new Date().toISOString(), status:"comparing", scopeCount:all.length });
+    }
+
+    function addIdsToSession(newIds, category) {
+        const newRecords = newIds.map(id => ({ id, name: pickCollection(), category, phase:"pending", matchPct:null, breakPct:null, totalFields:null, matchedFields:null, breakFields:null, duration:null }));
+        const updated = [...(scope||[]), ...newRecords];
+        setScope(updated);
+        if (currentSession) setCurrentSession({...currentSession, scopeCount: updated.length});
+        simulateProgress(newRecords, updated);
+    }
+
+    async function loadSampleFromEndpoint(endpoint) {
+        setSampleLoading(true);
+        try {
+            const res = await fetch(API_BASE + endpoint, { method: 'POST' });
+            if (!res.ok) throw new Error('Server returned ' + res.status);
+            const data = await res.json();
+            setScope(data.scope);
+            setSessionName(data.session.name);
+            setCurrentSession({
+                id: "s-sample",
+                name: data.session.name,
+                user: "you",
+                startedAt: data.session.startedAt,
+                status: "completed",
+                scopeCount: data.session.totalIds
+            });
+            setPhase("done");
+            setIsSampleMode(true);
+        } catch (err) {
+            alert("Failed to load sample data: " + err.message);
+        } finally {
+            setSampleLoading(false);
+        }
+    }
+
+    function loadSampleData() { loadSampleFromEndpoint('/api/sample/load'); }
+    function loadSampleDataMem() { loadSampleFromEndpoint('/api/sample/load-mem'); }
+
+    async function selectRecord(record) {
+        if (isSampleMode) {
+            try {
+                const res = await fetch(API_BASE + '/api/sample/breaks/' + encodeURIComponent(record.id));
+                if (res.ok) {
+                    const breaks = await res.json();
+                    setSampleBreaks(breaks);
+                }
+            } catch (err) {
+                console.error("Failed to fetch breaks:", err);
+                setSampleBreaks(null);
+            }
+        } else {
+            setSampleBreaks(null);
+        }
+        setSelectedRecord(record);
+    }
+
+    function simulateProgress(records, fullScope) {
+        const phases = ["pending","baseline_loading","baseline_done","rc_loading","rc_done","comparing","completed"];
+        let data = fullScope || [...records];
+        const targetIds = new Set(records.map(r=>r.id));
+        if (tickRef.current) clearInterval(tickRef.current);
+        tickRef.current = setInterval(() => {
+            let changed = false;
+            data = data.map(r => {
+                if (!targetIds.has(r.id) && r.phase==="completed") return r;
+                const idx = phases.indexOf(r.phase);
+                if (idx < phases.length-1 && Math.random() < 0.15) {
+                    changed = true;
+                    const nextPhase = phases[idx+1];
+                    const isCompleted = nextPhase==="completed";
+                    const matchPct = isCompleted ? Math.floor(Math.random()*40+60) : null;
+                    const breakPct = matchPct!=null ? 100-matchPct : null;
+                    const totalFields = isCompleted ? Math.floor(Math.random()*60+20) : null;
+                    const matchedFields = totalFields!=null ? Math.round(totalFields*matchPct/100) : null;
+                    const breakFields = totalFields!=null ? totalFields-matchedFields : null;
+                    const duration = isCompleted ? (Math.random()*12+0.5).toFixed(1)+"s" : null;
+                    return {...r, phase:nextPhase, matchPct, breakPct, totalFields, matchedFields, breakFields, duration};
+                }
+                return r;
+            });
+            if (changed) setScope([...data]);
+            if (data.every(r => r.phase==="completed")) { clearInterval(tickRef.current); setPhase("done"); }
+        }, 400);
+    }
+
+    useEffect(() => () => { if (tickRef.current) clearInterval(tickRef.current); }, []);
+
+    function handleDownload() {
+        alert("Excel download triggered \u2014 will call backend /api/export endpoint.\n(Placeholder: ExcelReportService.generateExcelReport)");
+    }
+
+    function resetSession() {
+        if (tickRef.current) clearInterval(tickRef.current);
+        setCurrentSession(null); setScope(null); setPhase("idle"); setSelectedRecord(null); setSessionName(""); setCsvText("");
+        setIsSampleMode(false); setSampleBreaks(null); setSampleLoading(false);
+    }
+
+    return (
+        <div style={{ display:"flex", flexDirection:"column", height:"100vh" }}>
+            {/* Header */}
+            <header style={{ display:"flex", alignItems:"center", gap:12, padding:"8px 20px", background:"var(--bg-raised)", borderBottom:"1px solid var(--border)", flexShrink:0 }}>
+                <span style={{ fontSize:15, fontWeight:700, color:"var(--text-bright)", letterSpacing:1 }}>MongoDiff</span>
+                <span style={{ fontSize:11, color:"var(--text-dim)" }}>Collection Comparison Tool</span>
+                <div style={{ flex:1 }}/>
+                {currentSession && <span style={{ fontSize:12, color:"var(--accent)" }}>Session: <strong>{currentSession.name}</strong> &middot; {currentSession.scopeCount} IDs</span>}
+                <button style={S.btn} onClick={()=>setShowSessions(!showSessions)}><Icon name="users" size={14}/> Sessions</button>
+                {currentSession && <button style={S.btn} onClick={resetSession}><Icon name="x" size={14}/> End</button>}
+            </header>
+
+            {/* Main */}
+            <main style={{ flex:1, overflow:"auto", padding:20 }}>
+                {!currentSession ? (
+                    <div style={{ maxWidth:640, margin:"60px auto" }}>
+                        <h1 style={{ fontSize:24, color:"var(--text-bright)", marginBottom:8 }}>Start a Testing Session</h1>
+                        <p style={{ color:"var(--text-dim)", marginBottom:24 }}>Create a new comparison session or load a demo to explore the UI.</p>
+                        <div style={S.card}>
+                            <label style={S.label}>Session Name</label>
+                            <input value={sessionName} onChange={e=>setSessionName(e.target.value)} placeholder="e.g. Q1 Regression" style={{...S.input, width:"100%", marginBottom:16 }}/>
+                            <label style={S.label}>Upload Scope (paste CSV of IDs)</label>
+                            <textarea value={csvText} onChange={e=>setCsvText(e.target.value)} placeholder={"ACC-00001, ACC-00002, ACC-00003\nor one per line..."} rows={6} style={{...S.input, width:"100%", resize:"vertical", marginBottom:16 }}/>
+                            <div style={{ display:"flex", gap:8 }}>
+                                <button style={{...S.btn,...S.btnPrimary, opacity:(!sessionName.trim()||!csvText.trim())?0.5:1 }} disabled={!sessionName.trim()||!csvText.trim()} onClick={startSession}><Icon name="play" size={12} color="#fff"/> Start Session</button>
+                                <button style={S.btn} onClick={loadDemoSession}><Icon name="refresh" size={14}/> Load Demo (80 IDs)</button>
+                                <button style={{...S.btn,...S.btnPrimary, opacity:sampleLoading?0.5:1}} disabled={sampleLoading} onClick={loadSampleData}>
+                                    {sampleLoading ? <Icon name="spinner" size={12} color="#fff"/> : <Icon name="download" size={12} color="#fff"/>} {sampleLoading ? "Loading..." : "Load Sample (MongoDB)"}
+                                </button>
+                                <button style={{...S.btn,...S.btnPrimary, opacity:sampleLoading?0.5:1}} disabled={sampleLoading} onClick={loadSampleDataMem}>
+                                    {sampleLoading ? <Icon name="spinner" size={12} color="#fff"/> : <Icon name="download" size={12} color="#fff"/>} {sampleLoading ? "Loading..." : "Load Mongo Mem"}
+                                </button>
+                            </div>
+                        </div>
+                        <div style={{ marginTop:32 }}>
+                            <h2 style={S.h2}><Icon name="users" size={16} style={{marginRight:6,verticalAlign:"middle"}}/> Other Active Sessions</h2>
+                            {sessions.map(s => (
+                                <div key={s.id} style={{...S.card, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+                                    <div>
+                                        <span style={{ color:"var(--text-bright)", fontWeight:600 }}>{s.name}</span>
+                                        <div style={{ fontSize:11, color:"var(--text-dim)", marginTop:2 }}>by <span style={{color:"var(--accent)"}}>{s.user}</span> &middot; {s.scopeCount} IDs &middot; {new Date(s.startedAt).toLocaleTimeString()}</div>
+                                    </div>
+                                    <PhaseBadge phase={s.status}/>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                ) : selectedRecord ? (
+                    <BreakDetailView record={selectedRecord} onBack={()=>{setSelectedRecord(null);setSampleBreaks(null);}} breaks={isSampleMode ? sampleBreaks : null}/>
+                ) : (
+                    <ResultsGrid scope={scope} sessionName={currentSession.name} onSelectRecord={selectRecord} onDownload={handleDownload} onAddIds={addIdsToSession}/>
+                )}
+            </main>
+
+            {/* Footer */}
+            <footer style={{ padding:"6px 20px", background:"var(--bg-raised)", borderTop:"1px solid var(--border)", fontSize:11, color:"var(--text-dim)", display:"flex", justifyContent:"space-between", flexShrink:0 }}>
+                <span>MongoDiff v0.1 &middot; Backend placeholder</span>
+                <span>{scope ? `${scope.filter(r=>r.phase==="completed").length}/${scope.length} compared` : "No active session"}</span>
+            </footer>
+
+            {showSessions && <ActiveSessionsPanel sessions={[...sessions,...(currentSession?[currentSession]:[])]} currentSessionId={currentSession?.id} onClose={()=>setShowSessions(false)}/>}
+        </div>
+    );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

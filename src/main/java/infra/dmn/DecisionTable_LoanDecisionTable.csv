@@ -1,0 +1,3 @@
+Rule,CONDITION–Age,CONDITION–Score,ACTION–Decision
+1,Applicant Age >= 18,Credit Score >= 700,"""Approve"""
+2,true,true,"""Reject"""

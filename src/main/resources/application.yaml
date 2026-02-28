@@ -1,12 +1,11 @@
 spring:
+  autoconfigure:
+    exclude: org.springframework.boot.autoconfigure.mongo.embedded.EmbeddedMongoAutoConfiguration
   data:
     mongodb:
       # Use your local MongoDB URI for non-embedded operations
-      uri: mongodb://localhost:27017/comparisondb
-  mongodb:
-    embedded:
-      # Set the embedded MongoDB version to be used by Flapdoodle
-      version: 4.0.12
+      uri: mongodb://localhost:27017/mongodiff
+      auto-index-creation: false
 
 logging:
   level:
