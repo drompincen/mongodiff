@@ -9,6 +9,7 @@ import org.springframework.beans.NotReadablePropertyException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Collation;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
 
@@ -99,7 +100,15 @@ public class GenericComparisonService {
         long fullyMatchedKeys = 0;
         long totalAttributeDifferences = 0;
 
-        Query query = new Query().with(Sort.by(Sort.Direction.ASC, keyAttribute));
+        // Use Collation.simple() to ensure MongoDB sorts using binary comparison,
+        // which matches Java's Comparable.compareTo() ordering. Without this, a
+        // collection-level or database-level collation (e.g., locale-aware, case-insensitive)
+        // could produce a different sort order than Java expects, causing the merge-join
+        // algorithm to misalign and report false breaks.
+        Query query = new Query()
+                .with(Sort.by(Sort.Direction.ASC, keyAttribute))
+                .collation(Collation.simple())
+                .allowDiskUse(true);
         List<ComparisonBreak> allBreaksAndMatches = new ArrayList<>();
 
         try (Stream<T> streamA = mongoTemplate.stream(query, clazz, collectionA);
@@ -109,11 +118,13 @@ public class GenericComparisonService {
             Iterator<T> iteratorB = streamB.iterator();
 
             T currentA = null;
+            Comparable<?> prevKeyA = null;
             if (iteratorA.hasNext()) {
                 currentA = iteratorA.next();
                 itemsProcessedA++;
             }
             T currentB = null;
+            Comparable<?> prevKeyB = null;
             if (iteratorB.hasNext()) {
                 currentB = iteratorB.next();
                 itemsProcessedB++;
@@ -123,6 +134,20 @@ public class GenericComparisonService {
                 if (currentA != null && currentB != null) {
                     Comparable<?> keyA = getKeyValue(currentA, keyAttribute, collectionA);
                     Comparable<?> keyB = getKeyValue(currentB, keyAttribute, collectionB);
+
+                    // Defensive check: verify MongoDB stream is sorted consistently with our comparator
+                    if (prevKeyA != null && keyA != null && compareKeys(prevKeyA, keyA, keyAttribute) > 0) {
+                        logger.error("Sort order mismatch detected in collection '{}': key '{}' appeared after '{}' " +
+                                "but is less according to Java comparator. This indicates MongoDB's sort collation " +
+                                "differs from Java's Comparable.compareTo(). Results may be incorrect.",
+                                collectionA, keyA, prevKeyA);
+                    }
+                    if (prevKeyB != null && keyB != null && compareKeys(prevKeyB, keyB, keyAttribute) > 0) {
+                        logger.error("Sort order mismatch detected in collection '{}': key '{}' appeared after '{}' " +
+                                "but is less according to Java comparator. This indicates MongoDB's sort collation " +
+                                "differs from Java's Comparable.compareTo(). Results may be incorrect.",
+                                collectionB, keyB, prevKeyB);
+                    }
 
                     int cmp = compareKeys(keyA, keyB, keyAttribute);
 
@@ -139,6 +164,8 @@ public class GenericComparisonService {
                             keysWithAttributeMismatch++;
                             totalAttributeDifferences += individualDiffsForKey;
                         }
+                        prevKeyA = keyA;
+                        prevKeyB = keyB;
                         currentA = iteratorA.hasNext() ? iteratorA.next() : null;
                         if (currentA != null) itemsProcessedA++;
                         currentB = iteratorB.hasNext() ? iteratorB.next() : null;
@@ -147,12 +174,14 @@ public class GenericComparisonService {
                         keysOnlyInA++;
                         // differenceField="RecordMissing", valueA="exists", valueB="missing"
                         allBreaksAndMatches.add(new ComparisonBreak(keyAStr, "RecordMissing", "exists", "missing", "onlyOnA"));
+                        prevKeyA = keyA;
                         currentA = iteratorA.hasNext() ? iteratorA.next() : null;
                         if (currentA != null) itemsProcessedA++;
                     } else { // cmp > 0
                         keysOnlyInB++;
                         // differenceField="RecordMissing", valueA="missing", valueB="exists"
                         allBreaksAndMatches.add(new ComparisonBreak(keyBStr, "RecordMissing", "missing", "exists", "onlyOnB"));
+                        prevKeyB = keyB;
                         currentB = iteratorB.hasNext() ? iteratorB.next() : null;
                         if (currentB != null) itemsProcessedB++;
                     }
