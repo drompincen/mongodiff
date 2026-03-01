@@ -16,8 +16,10 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Load test that connects to a real local MongoDB instance.
@@ -54,7 +56,15 @@ class LoadSimVerificationTest {
 
     @BeforeAll
     void setUp() {
-        mongoClient = MongoClients.create("mongodb://localhost:27017");
+        mongoClient = MongoClients.create("mongodb://localhost:27017/?connectTimeoutMS=3000&serverSelectionTimeoutMS=3000");
+        try {
+            mongoClient.getDatabase("admin").runCommand(new org.bson.Document("ping", 1));
+        } catch (Exception e) {
+            logger.info("Skipping LoadSimVerificationTest: local MongoDB not available ({})", e.getMessage());
+            mongoClient.close();
+            mongoClient = null;
+            assumeTrue(false, "Local MongoDB on localhost:27017 is required for this test");
+        }
         mongoTemplate = new MongoTemplate(mongoClient, "LoadSimVerification");
         service = new GenericComparisonService();
         service.setMongoTemplate(mongoTemplate);
